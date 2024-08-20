@@ -1,4 +1,4 @@
-package main.java.com.example.fifoproject;
+package com.example.fifoproject;
 
 public class HelloController {
 }

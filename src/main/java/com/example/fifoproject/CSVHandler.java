@@ -1,4 +1,4 @@
-package main.java.com.example.fifoproject;
+package com.example.fifoproject;
 
 import java.io.*;
 import java.time.LocalDate;
