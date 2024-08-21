@@ -100,6 +100,7 @@ public class Main {
         }
     }
 
+
     private static void deleteCustomer() {
         System.out.print("Müşteri ID: ");
         String id = scanner.nextLine();

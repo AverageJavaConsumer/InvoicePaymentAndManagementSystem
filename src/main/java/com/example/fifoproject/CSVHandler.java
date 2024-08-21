@@ -8,24 +8,33 @@ import java.util.List;
 public class CSVHandler {
 
     private static final String CSV_FILE_PATH = "customers.csv";
-
     // CSV dosyasına müşteri ve faturaları kaydetme
     public static void saveCustomersToCSV(List<Customer> customers) {
         try (PrintWriter writer = new PrintWriter(new FileWriter(CSV_FILE_PATH))) {
             for (Customer customer : customers) {
-                for (Invoice invoice : customer.getInvoices()) {
-                    String line = String.format("%s,%s,%s,%f,%s,%s,%b",
+                // Eğer müşterinin faturası yoksa fatura kısımları boş olacak
+                if (customer.getInvoices().isEmpty()) {
+                    String line = String.format("%s,%s,%s,null,null,null",
                             customer.getId(),
                             customer.getName(),
-                            customer.getLastName(),
-                            invoice.getAmount(),
-                            invoice.getDueDate(),
-                            invoice.isPaid() ? invoice.getDueDate() : "null",
-                            invoice.isPaid()
+                            customer.getLastName()
                     );
                     writer.println(line);
+                } else {
+                    for (Invoice invoice : customer.getInvoices()) {
+                        String line = String.format("%s,%s,%s,%f,%s,%b",
+                                customer.getId(),
+                                customer.getName(),
+                                customer.getLastName(),
+                                invoice.getAmount(),
+                                invoice.getDueDate(),
+                                invoice.isPaid()
+                        );
+                        writer.println(line);
+                    }
                 }
             }
+            System.out.println("CSV dosyasına başarıyla yazıldı.");
         } catch (IOException e) {
             System.out.println("CSV dosyasına yazılırken hata oluştu: " + e.getMessage());
         }
