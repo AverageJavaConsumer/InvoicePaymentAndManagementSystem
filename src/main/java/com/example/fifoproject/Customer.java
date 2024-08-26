@@ -1,20 +1,31 @@
 package com.example.fifoproject;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.LocalDate;
 import java.util.UUID;
 
 public class Customer {
-    private String name;
-    private String LastName;
     private String id;
-    private List<Invoice> invoices; // Müşterinin faturaları
+    private String name;
+    private String lastName;
+    private boolean isGroupCompany; //Grup şirket kontrolü
 
-    public Customer(String name, String LastName) {
+    public Customer(String name, String lastName) {
         this.name = name;
-        this.LastName = LastName;
+        this.lastName = lastName;
+        this.isGroupCompany = isGroupCompany;
         this.id = UUID.randomUUID().toString(); // Rastgele benzersiz ID
-        this.invoices = new ArrayList<>();
+
+    }
+
+    // Müşteri ID'sini veritabanında ayarlamak için constructor
+    public Customer(String id, String name, String lastName, boolean isGroupCompany) {
+        this.id = id;
+        this.name = name;
+        this.lastName = lastName;
+        this.isGroupCompany = isGroupCompany;
     }
 
     public String getName() {
@@ -25,12 +36,20 @@ public class Customer {
         this.name = name;
     }
 
+    public boolean isGroupCompany() {
+        return isGroupCompany;
+    }
+
+    public void setGroupCompany(boolean groupCompany) {
+        isGroupCompany = groupCompany;
+    }
+
     public String getLastName() {
-        return LastName;
+        return lastName;
     }
 
     public void setLastName(String lastName) {
-        LastName = lastName;
+        this.lastName = lastName;
     }
 
     public String getId() {
@@ -41,69 +60,34 @@ public class Customer {
         this.id = id;
     }
 
-    public List<Invoice> getInvoices() {
-        return invoices;
+    // Müşterinin toplam borcunu hesaplar (Veritabanından)
+    public double getTotalDebt() {
+        return DatabaseManager.getCustomerDebt(id);
     }
 
-    public void addInvoice(Invoice invoice) {
-        invoices.add(invoice);
-    }
-
-    // Müşterinin borç detaylarını ayrı ayrı göster
-    public void displayDebtDetails() {
-        double totalPrincipal = 0;
-        double totalLateFees = 0;
-
-        for (Invoice invoice : invoices) {
-            if (!invoice.isPaid()) {
-                totalPrincipal += invoice.getAmount();
-                totalLateFees += invoice.calculateLateFee();
-            }
+    // Müşterinin gecikmiş borçlarını hesaplar (Veritabanından)
+    public double getTotalOverdueDebt() {
+        try {
+            return DatabaseManager.getLateFee(id);
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
+    }
+
+    // Müşteri borç detaylarını göster
+    public void displayDebtDetails() {
+        double totalPrincipal = getTotalDebt();
+        double totalLateFees = getTotalOverdueDebt();
 
         System.out.println("Ana Para: " + totalPrincipal);
         System.out.println("Gecikme Faizi: " + totalLateFees);
         System.out.println("Toplam Borç (Ana Para + Gecikme Faizi): " + (totalPrincipal + totalLateFees));
     }
 
-    // Müşterinin toplam borcunu hesapla
-    public double getTotalDebt() {
-        return invoices.stream()
-                .filter(invoice -> !invoice.isPaid())
-                .mapToDouble(Invoice::getTotalDebtWithLateFee)
-                .sum();
-    }
-
-    // Müşterinin gecikmiş faturalarını bul
-    public List<Invoice> getOverdueInvoices() {
-        List<Invoice> overdueInvoices = new ArrayList<>();
-        for (Invoice invoice : invoices) {
-            if (invoice.isOverdue()) {
-                overdueInvoices.add(invoice);
-            }
-        }
-        return overdueInvoices;
-    }
-
-    // Müşterinin ödemesi gereken toplam gecikmiş borcunu hesapla
-    public double getTotalOverdueDebt() {
-        return getOverdueInvoices().stream()
-                .mapToDouble(Invoice::getTotalDebtWithLateFee)
-                .sum();
-    }
-
-    // Toplu ödeme
+    // Toplu ödeme yapma işlemi (Veritabanı üzerinden)
     public void makeBulkPayment(double totalPayment) {
-        for (Invoice invoice : getInvoices()) {
-            if (!invoice.isPaid()) {
-                if (totalPayment >= invoice.getAmount()) {
-                    totalPayment -= invoice.getAmount();
-                    invoice.makePayment(invoice.getAmount());
-                } else {
-                    invoice.makePayment(totalPayment);
-                    break; // Ödeme bittiyse döngüden çık
-                }
-            }
-        }
+        DatabaseManager.makeBulkPayment(id, totalPayment);
     }
+
+
 }
