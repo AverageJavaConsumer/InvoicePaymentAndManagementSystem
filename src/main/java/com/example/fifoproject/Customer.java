@@ -1,23 +1,20 @@
 package com.example.fifoproject;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.time.LocalDate;
 import java.util.UUID;
 
 public class Customer {
     private String id;
     private String name;
     private String lastName;
-    private boolean isGroupCompany; //Grup şirket kontrolü
+    private boolean isGroupCompany; // Grup şirket kontrolü
+    private double extraPayment;  // Fazla ödeme kaydı
 
     public Customer(String name, String lastName) {
         this.name = name;
         this.lastName = lastName;
-        this.isGroupCompany = isGroupCompany;
+        this.isGroupCompany = false; // Varsayılan olarak grup şirket değil
         this.id = UUID.randomUUID().toString(); // Rastgele benzersiz ID
-
+        this.extraPayment = 0; // Başlangıçta fazla ödeme yok
     }
 
     // Müşteri ID'sini veritabanında ayarlamak için constructor
@@ -26,6 +23,7 @@ public class Customer {
         this.name = name;
         this.lastName = lastName;
         this.isGroupCompany = isGroupCompany;
+        this.extraPayment = 0; // Başlangıçta fazla ödeme yok
     }
 
     public String getName() {
@@ -60,6 +58,26 @@ public class Customer {
         this.id = id;
     }
 
+    public double getExtraPayment() {
+        return extraPayment;
+    }
+
+    // Fazla ödeme ekleme
+    public void addExtraPayment(double amount) {
+        this.extraPayment += amount;
+        System.out.println("Fazla ödeme eklendi: " + amount + ". Toplam fazla ödeme: " + this.extraPayment);
+    }
+
+    // Fazla ödemeden düşme
+    public void deductFromExtraPayment(double amount) {
+        if (extraPayment >= amount) {
+            extraPayment -= amount;
+            System.out.println("Fazla ödemeden düşülen miktar: " + amount + ". Kalan fazla ödeme: " + this.extraPayment);
+        } else {
+            System.out.println("Yeterli fazla ödeme yok.");
+        }
+    }
+
     // Müşterinin toplam borcunu hesaplar (Veritabanından)
     public double getTotalDebt() {
         return DatabaseManager.getCustomerDebt(id);
@@ -69,7 +87,7 @@ public class Customer {
     public double getTotalOverdueDebt() {
         try {
             return DatabaseManager.getLateFee(id);
-        } catch (SQLException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
@@ -88,6 +106,4 @@ public class Customer {
     public void makeBulkPayment(double totalPayment) {
         DatabaseManager.makeBulkPayment(id, totalPayment);
     }
-
-
 }

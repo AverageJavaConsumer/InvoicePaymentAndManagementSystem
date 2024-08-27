@@ -47,7 +47,8 @@ public class DatabaseManager {
                 "id TEXT PRIMARY KEY," +
                 "firstName TEXT," +
                 "lastName TEXT," +
-                "isGroupCompany BOOLEAN" +  // Yeni sütun, 1: true, 0: false
+                "isGroupCompany BOOLEAN," +  // Grup şirketi olup olmadığını gösterir
+                "excessPayment REAL DEFAULT 0" +  // Fazla ödeme sütunu, varsayılan olarak 0
                 ");";
 
         String createInvoiceTable = "CREATE TABLE IF NOT EXISTS Invoice (" +
@@ -70,6 +71,7 @@ public class DatabaseManager {
             System.out.println("Tablolar oluşturulurken hata oluştu: " + e.getMessage());
         }
     }
+
 
 
     // Müşteri ekleme
@@ -107,12 +109,36 @@ public class DatabaseManager {
 
     // Fatura ekleme
     public static void insertInvoice(String customerId, double amount, String dueDate) {
-        String insertInvoiceSQL = "INSERT INTO Invoice (customerId, amount, dueDate, isPaid) VALUES (?, ?, ?, 0)";
+        String insertInvoiceSQL = "INSERT INTO Invoice (customerId, amount, dueDate, isPaid) VALUES (?, ?, ?, ?)";
 
         try (PreparedStatement pstmt = connection.prepareStatement(insertInvoiceSQL)) {
             pstmt.setString(1, customerId);
             pstmt.setDouble(2, amount);
             pstmt.setString(3, dueDate);
+
+            // Müşterinin fazla ödemesi var mı kontrol et
+            double excessPayment = getExcessPayment(customerId);
+            boolean invoicePaid = false;
+
+            // Eğer fazla ödeme varsa yeni faturaya uygula
+            if (excessPayment > 0) {
+                if (excessPayment >= amount) {
+                    // Fazla ödeme faturayı tamamen karşılıyorsa
+                    invoicePaid = true;
+                    updateExcessPayment(customerId, excessPayment - amount); // Kalan fazla ödemeyi güncelle
+                    System.out.println("Fatura fazla ödeme ile ödendi, kalan fazla ödeme: " + (excessPayment - amount));
+                } else {
+                    // Fazla ödeme faturanın bir kısmını karşılıyorsa
+                    updateExcessPayment(customerId, 0); // Fazla ödeme sıfırlanıyor
+                    amount -= excessPayment; // Borç, fazla ödeme kadar azaltılıyor
+                    pstmt.setDouble(2, amount); // Güncellenmiş borcu kaydet
+                    System.out.println("Fazla ödeme faturaya uygulandı, kalan borç: " + amount);
+                }
+            }
+
+            // Fatura ödendi mi, edilmedi mi ona göre kaydediyoruz
+            pstmt.setInt(4, invoicePaid ? 1 : 0); // Eğer fatura ödendiyse isPaid = 1
+
             pstmt.executeUpdate();
             System.out.println("Fatura başarıyla eklendi.");
 
@@ -121,8 +147,49 @@ public class DatabaseManager {
         }
     }
 
+    // Fazla ödemeyi getir
+    public static double getExcessPayment(String customerId) {
+        String query = "SELECT excessPayment FROM Customer WHERE id = ?";
+        double excessPayment = 0;
+
+        try (PreparedStatement pstmt = connection.prepareStatement(query)) {
+            pstmt.setString(1, customerId);
+            ResultSet rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                excessPayment = rs.getDouble("excessPayment");
+            }
+        } catch (SQLException e) {
+            System.out.println("Fazla ödeme sorgulanırken hata oluştu: " + e.getMessage());
+        }
+
+        return excessPayment;
+    }
+
+    // Fazla ödemeyi güncelle
+    public static void updateExcessPayment(String customerId, double newExcessPayment) {
+        String updateSQL = "UPDATE Customer SET excessPayment = ? WHERE id = ?";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
+            pstmt.setDouble(1, newExcessPayment);
+            pstmt.setString(2, customerId);
+            pstmt.executeUpdate();
+            System.out.println("Fazla ödeme güncellendi: " + newExcessPayment);
+        } catch (SQLException e) {
+            System.out.println("Fazla ödeme güncellenirken hata oluştu: " + e.getMessage());
+        }
+    }
+
+
     // Ödeme yapma
-    public static void makePayment(String customerId, double paymentAmount) {
+    public static double makePayment(String customerId, double paymentAmount) {
+        Customer customer = getCustomerById(customerId);
+
+        if (customer == null) {
+            System.out.println("Müşteri bulunamadı.");
+            return paymentAmount;
+        }
+
         String selectUnpaidInvoiceSQL = "SELECT * FROM Invoice WHERE customerId = ? AND isPaid = 0 ORDER BY dueDate ASC";
 
         try (PreparedStatement pstmt = connection.prepareStatement(selectUnpaidInvoiceSQL)) {
@@ -130,7 +197,7 @@ public class DatabaseManager {
             ResultSet rs = pstmt.executeQuery();
 
             while (rs.next()) {
-                double invoiceAmount = rs.getDouble("amount");
+                double invoiceAmount = rs.getDouble("totalDebt");
                 int invoiceId = rs.getInt("id");
 
                 if (paymentAmount >= invoiceAmount) {
@@ -145,12 +212,40 @@ public class DatabaseManager {
                 }
             }
 
-            System.out.println("Ödeme yapıldı.");
+            // Kalan miktar varsa müşterinin fazla ödemesi olarak kaydedilir
+            if (paymentAmount > 0) {
+                customer.addExtraPayment(paymentAmount);  // Fazla ödemeyi kaydet
+                System.out.println("Kalan miktar (" + paymentAmount + ") müşterinin fazla ödemesi olarak kaydedildi.");
+            }
 
         } catch (SQLException e) {
             System.out.println("Ödeme yapılırken hata oluştu: " + e.getMessage());
         }
+
+        return paymentAmount;
     }
+
+    public static Customer getCustomerById(String customerId) {
+        String query = "SELECT * FROM Customer WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(query)) {
+            pstmt.setString(1, customerId);
+            ResultSet rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                return new Customer(
+                        rs.getString("id"),
+                        rs.getString("firstName"),
+                        rs.getString("lastName"),
+                        rs.getBoolean("isGroupCompany")
+                );
+            }
+
+        } catch (SQLException e) {
+            System.out.println("Müşteri bilgisi alınırken hata oluştu: " + e.getMessage());
+        }
+        return null;
+    }
+
 
     // Faturayı ödenmiş olarak güncelle
     private static void updateInvoiceAsPaid(int invoiceId) {

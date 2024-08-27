@@ -138,9 +138,8 @@ public class Main {
                 }
             }
 
-            // Veritabanına fatura ekle
+            // Veritabanına fatura ekle ve fazla ödeme durumunu kontrol et
             DatabaseManager.insertInvoice(customerId, amount, dueDate.toString());
-            System.out.println("Fatura başarıyla eklendi.");
 
         } catch (NumberFormatException e) {
             System.out.println("Geçersiz fatura tutarı. Lütfen geçerli bir sayı girin.");
@@ -148,6 +147,7 @@ public class Main {
             System.out.println("Fatura eklenirken bir hata oluştu: " + e.getMessage());
         }
     }
+
 
     private static void makePayment() {
         try {
@@ -159,13 +159,22 @@ public class Main {
             scanner.nextLine(); // nextDouble'dan sonra satır sonunu temizlemek için
 
             // Veritabanında ödeme işlemi
-            DatabaseManager.makePayment(id, paymentAmount);
+            double remainingAmount = DatabaseManager.makePayment(id, paymentAmount);
             System.out.println("Ödeme yapıldı: " + paymentAmount);
+
+            if (remainingAmount > 0) {
+                // Kalan miktarı müşterinin fazla ödemesine ekle
+                Customer customer = DatabaseManager.getCustomerById(id);
+                customer.addExtraPayment(remainingAmount);
+                System.out.println("Artan miktar müşterinin fazla ödemesi olarak kaydedildi: " + remainingAmount);
+            }
 
         } catch (Exception e) {
             System.out.println("Ödeme yapılırken bir hata oluştu: " + e.getMessage());
         }
     }
+
+
 
     private static void viewCustomerDebt() {
         try {
