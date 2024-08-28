@@ -3,6 +3,7 @@ package com.example.fifoproject;
 import java.io.File;
 import java.sql.*;
 import java.time.LocalDate;
+import java.util.UUID;
 
 public class DatabaseManager {
 
@@ -47,8 +48,8 @@ public class DatabaseManager {
                 "id TEXT PRIMARY KEY," +
                 "firstName TEXT," +
                 "lastName TEXT," +
-                "isGroupCompany BOOLEAN," +  // Grup şirketi olup olmadığını gösterir
-                "excessPayment REAL DEFAULT 0" +  // Fazla ödeme sütunu, varsayılan olarak 0
+                "isGroupCompany BOOLEAN," +
+                "excessPayment REAL DEFAULT 0" +
                 ");";
 
         String createInvoiceTable = "CREATE TABLE IF NOT EXISTS Invoice (" +
@@ -63,9 +64,29 @@ public class DatabaseManager {
                 "FOREIGN KEY (customerId) REFERENCES Customer(id)" +
                 ");";
 
+        // Ödeme logu ve fatura ilişkisini takip eden tabloyu oluşturuyoruz
+        String createPaymentLogTable = "CREATE TABLE IF NOT EXISTS PaymentLog (" +
+                "paymentId TEXT PRIMARY KEY, " +
+                "invoiceId INTEGER, " +
+                "customerId TEXT, " +
+                "paidAmount REAL, " +
+                "paymentDate TEXT, " +
+                "FOREIGN KEY (invoiceId) REFERENCES Invoice(id), " +
+                "FOREIGN KEY (customerId) REFERENCES Customer(id)" +
+                ");";
+
+        String createPaymentInvoiceRelationTable = "CREATE TABLE IF NOT EXISTS PaymentInvoiceRelation (" +
+                "paymentId TEXT, " +
+                "invoiceId INTEGER, " +
+                "FOREIGN KEY (paymentId) REFERENCES PaymentLog(paymentId), " +
+                "FOREIGN KEY (invoiceId) REFERENCES Invoice(id)" +
+                ");";
+
         try (Statement stmt = connection.createStatement()) {
             stmt.execute(createCustomerTable);
             stmt.execute(createInvoiceTable);
+            stmt.execute(createPaymentLogTable);  // invoiceId sütunu burada tanımlanmalı
+            stmt.execute(createPaymentInvoiceRelationTable);
             System.out.println("Tablolar başarıyla oluşturuldu.");
         } catch (SQLException e) {
             System.out.println("Tablolar oluşturulurken hata oluştu: " + e.getMessage());
@@ -200,13 +221,25 @@ public class DatabaseManager {
                 double invoiceAmount = rs.getDouble("totalDebt");
                 int invoiceId = rs.getInt("id");
 
+                // Her ödeme için benzersiz bir paymentId oluşturuyoruz
+                String paymentId = java.util.UUID.randomUUID().toString();
+
                 if (paymentAmount >= invoiceAmount) {
                     // Fatura tamamen ödeniyor
                     paymentAmount -= invoiceAmount;
                     updateInvoiceAsPaid(invoiceId);
+
+                    // Ödeme kaydı yapılıyor
+                    insertPaymentLog(paymentId, customerId, invoiceAmount); // invoiceId kaldırıldı, gerek yok
+                    insertPaymentInvoiceRelation(paymentId, invoiceId); // Ödeme-fatura ilişkisi kaydediliyor
                 } else {
                     // Fatura kısmen ödeniyor
                     updateInvoiceAmount(invoiceId, invoiceAmount - paymentAmount);
+
+                    // Kısmi ödeme kaydı yapılıyor
+                    insertPaymentLog(paymentId, customerId, paymentAmount); // invoiceId kaldırıldı
+                    insertPaymentInvoiceRelation(paymentId, invoiceId); // Ödeme-fatura ilişkisi kaydediliyor
+
                     paymentAmount = 0;
                     break;
                 }
@@ -214,7 +247,7 @@ public class DatabaseManager {
 
             // Kalan miktar varsa müşterinin fazla ödemesi olarak kaydedilir
             if (paymentAmount > 0) {
-                customer.addExtraPayment(paymentAmount);  // Fazla ödemeyi kaydet
+                customer.addExtraPayment(paymentAmount);
                 System.out.println("Kalan miktar (" + paymentAmount + ") müşterinin fazla ödemesi olarak kaydedildi.");
             }
 
@@ -224,6 +257,95 @@ public class DatabaseManager {
 
         return paymentAmount;
     }
+
+
+
+    // Ödeme logunu ekle
+    public static void insertPaymentLog(String paymentId, String customerId, double paidAmount) {
+        String insertPaymentLogSQL = "INSERT INTO PaymentLog (paymentId, customerId, paidAmount, paymentDate) VALUES (?, ?, ?, ?)";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(insertPaymentLogSQL)) {
+            pstmt.setString(1, paymentId);
+            pstmt.setString(2, customerId);
+            pstmt.setDouble(3, paidAmount);
+            pstmt.setString(4, LocalDate.now().toString());
+            pstmt.executeUpdate();
+            System.out.println("Ödeme logu başarıyla kaydedildi.");
+        } catch (SQLException e) {
+            System.out.println("Ödeme logu kaydedilirken hata oluştu: " + e.getMessage());
+        }
+    }
+
+
+
+    // Ödeme ve fatura ilişkisini ekle
+    public static void insertPaymentInvoiceRelation(String paymentId, int invoiceId) {
+        String insertPaymentInvoiceRelationSQL = "INSERT INTO PaymentInvoiceRelation (paymentId, invoiceId) VALUES (?, ?)";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(insertPaymentInvoiceRelationSQL)) {
+            pstmt.setString(1, paymentId);
+            pstmt.setInt(2, invoiceId);
+            pstmt.executeUpdate();
+            System.out.println("Ödeme ve fatura ilişkisi başarıyla kaydedildi.");
+        } catch (SQLException e) {
+            System.out.println("Ödeme ve fatura ilişkisi kaydedilirken hata oluştu: " + e.getMessage());
+        }
+    }
+
+    public static void viewAllPaymentLogs() {
+        String query = "SELECT * FROM PaymentLog";
+
+        try (Statement stmt = connection.createStatement()) {
+            ResultSet rs = stmt.executeQuery(query);
+
+            while (rs.next()) {
+                String paymentId = rs.getString("paymentId");
+                int invoiceId = rs.getInt("invoiceId");
+                String customerId = rs.getString("customerId");
+                double paidAmount = rs.getDouble("paidAmount");
+                String paymentDate = rs.getString("paymentDate");
+
+                System.out.println("Ödeme ID: " + paymentId +
+                        ", Fatura ID: " + invoiceId +
+                        ", Müşteri ID: " + customerId +
+                        ", Ödenen Tutar: " + paidAmount +
+                        ", Ödeme Tarihi: " + paymentDate);
+            }
+        } catch (SQLException e) {
+            System.out.println("Ödeme logları görüntülenirken hata oluştu: " + e.getMessage());
+        }
+    }
+
+
+    public static void viewPaymentInvoiceRelations() {
+        String query = "SELECT pir.paymentId, pir.invoiceId, pl.customerId, pl.paidAmount, pl.paymentDate " +
+                "FROM PaymentInvoiceRelation pir " +
+                "JOIN PaymentLog pl ON pir.paymentId = pl.paymentId " +
+                "ORDER BY pir.paymentId";
+
+        try (Statement stmt = connection.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+
+            while (rs.next()) {
+                String paymentId = rs.getString("paymentId");
+                int invoiceId = rs.getInt("invoiceId");
+                String customerId = rs.getString("customerId");
+                double paidAmount = rs.getDouble("paidAmount");
+                String paymentDate = rs.getString("paymentDate");
+
+                System.out.println("Ödeme ID: " + paymentId +
+                        ", Fatura ID: " + invoiceId +
+                        ", Müşteri ID: " + customerId +
+                        ", Ödenen Tutar: " + paidAmount +
+                        ", Ödeme Tarihi: " + paymentDate);
+            }
+
+        } catch (SQLException e) {
+            System.out.println("Fatura-Ödeme ilişkileri görüntülenirken hata oluştu: " + e.getMessage());
+        }
+    }
+
+
 
     public static Customer getCustomerById(String customerId) {
         String query = "SELECT * FROM Customer WHERE id = ?";
