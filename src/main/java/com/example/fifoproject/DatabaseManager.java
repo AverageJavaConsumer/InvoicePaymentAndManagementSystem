@@ -64,16 +64,18 @@ public class DatabaseManager {
                 "FOREIGN KEY (customerId) REFERENCES Customer(id)" +
                 ");";
 
-        // Ödeme logu ve fatura ilişkisini takip eden tabloyu oluşturuyoruz
         String createPaymentLogTable = "CREATE TABLE IF NOT EXISTS PaymentLog (" +
-                "paymentId TEXT PRIMARY KEY, " +
+                "paymentId TEXT, " +
                 "invoiceId INTEGER, " +
                 "customerId TEXT, " +
                 "paidAmount REAL, " +
                 "paymentDate TEXT, " +
+                "PRIMARY KEY (paymentId, invoiceId), " + // Bu satırı güncelledik
                 "FOREIGN KEY (invoiceId) REFERENCES Invoice(id), " +
                 "FOREIGN KEY (customerId) REFERENCES Customer(id)" +
                 ");";
+
+
 
         String createPaymentInvoiceRelationTable = "CREATE TABLE IF NOT EXISTS PaymentInvoiceRelation (" +
                 "paymentId TEXT, " +
@@ -129,10 +131,11 @@ public class DatabaseManager {
     }
 
     // Fatura ekleme
+    // Fatura ekleme
     public static void insertInvoice(String customerId, double amount, String dueDate) {
-        String insertInvoiceSQL = "INSERT INTO Invoice (customerId, amount, dueDate, isPaid) VALUES (?, ?, ?, ?)";
+        String insertInvoiceSQL = "INSERT INTO Invoice (customerId, amount, dueDate, totalDebt, isPaid) VALUES (?, ?, ?, ?, ?)";
 
-        try (PreparedStatement pstmt = connection.prepareStatement(insertInvoiceSQL)) {
+        try (PreparedStatement pstmt = connection.prepareStatement(insertInvoiceSQL, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setString(1, customerId);
             pstmt.setDouble(2, amount);
             pstmt.setString(3, dueDate);
@@ -140,6 +143,7 @@ public class DatabaseManager {
             // Müşterinin fazla ödemesi var mı kontrol et
             double excessPayment = getExcessPayment(customerId);
             boolean invoicePaid = false;
+            double totalDebt = amount;
 
             // Eğer fazla ödeme varsa yeni faturaya uygula
             if (excessPayment > 0) {
@@ -148,25 +152,36 @@ public class DatabaseManager {
                     invoicePaid = true;
                     updateExcessPayment(customerId, excessPayment - amount); // Kalan fazla ödemeyi güncelle
                     System.out.println("Fatura fazla ödeme ile ödendi, kalan fazla ödeme: " + (excessPayment - amount));
+                    totalDebt = 0;
                 } else {
                     // Fazla ödeme faturanın bir kısmını karşılıyorsa
                     updateExcessPayment(customerId, 0); // Fazla ödeme sıfırlanıyor
-                    amount -= excessPayment; // Borç, fazla ödeme kadar azaltılıyor
-                    pstmt.setDouble(2, amount); // Güncellenmiş borcu kaydet
-                    System.out.println("Fazla ödeme faturaya uygulandı, kalan borç: " + amount);
+                    totalDebt = amount - excessPayment; // Borç, fazla ödeme kadar azaltılıyor
+                    System.out.println("Fazla ödeme faturaya uygulandı, kalan borç: " + totalDebt);
                 }
             }
 
             // Fatura ödendi mi, edilmedi mi ona göre kaydediyoruz
-            pstmt.setInt(4, invoicePaid ? 1 : 0); // Eğer fatura ödendiyse isPaid = 1
+            pstmt.setDouble(4, totalDebt);
+            pstmt.setInt(5, invoicePaid ? 1 : 0); // Eğer fatura ödendiyse isPaid = 1
 
             pstmt.executeUpdate();
-            System.out.println("Fatura başarıyla eklendi.");
+
+            // Fatura ID'sini almak için
+            ResultSet generatedKeys = pstmt.getGeneratedKeys();
+            if (generatedKeys.next()) {
+                int invoiceId = generatedKeys.getInt(1);
+                System.out.println("Fatura başarıyla eklendi, Fatura ID: " + invoiceId);
+            } else {
+                System.out.println("Fatura eklendi ancak ID alınamadı.");
+            }
 
         } catch (SQLException e) {
             System.out.println("Fatura eklenirken hata oluştu: " + e.getMessage());
         }
     }
+
+
 
     // Fazla ödemeyi getir
     public static double getExcessPayment(String customerId) {
@@ -201,8 +216,7 @@ public class DatabaseManager {
         }
     }
 
-
-    // Ödeme yapma
+    // Ödeme yapma işlemi
     public static double makePayment(String customerId, double paymentAmount) {
         Customer customer = getCustomerById(customerId);
 
@@ -217,37 +231,43 @@ public class DatabaseManager {
             pstmt.setString(1, customerId);
             ResultSet rs = pstmt.executeQuery();
 
-            while (rs.next()) {
+            String paymentId = UUID.randomUUID().toString(); // Tek bir paymentId üretelim
+
+            while (rs.next() && paymentAmount > 0) {
                 double invoiceAmount = rs.getDouble("totalDebt");
                 int invoiceId = rs.getInt("id");
 
-                // Her ödeme için benzersiz bir paymentId oluşturuyoruz
-                String paymentId = java.util.UUID.randomUUID().toString();
+                System.out.println("Fatura ID: " + invoiceId + ", Toplam Borç: " + invoiceAmount);
 
-                if (paymentAmount >= invoiceAmount) {
+                if (paymentAmount >= invoiceAmount && invoiceAmount > 0) {
                     // Fatura tamamen ödeniyor
                     paymentAmount -= invoiceAmount;
                     updateInvoiceAsPaid(invoiceId);
 
-                    // Ödeme kaydı yapılıyor
-                    insertPaymentLog(paymentId, customerId, invoiceAmount); // invoiceId kaldırıldı, gerek yok
-                    insertPaymentInvoiceRelation(paymentId, invoiceId); // Ödeme-fatura ilişkisi kaydediliyor
-                } else {
-                    // Fatura kısmen ödeniyor
-                    updateInvoiceAmount(invoiceId, invoiceAmount - paymentAmount);
+                    // Fatura ve ödeme ilişkisini doğru bir şekilde kaydet
+                    insertPaymentLog(paymentId, customerId, invoiceAmount, invoiceId);
+                    insertPaymentInvoiceRelation(paymentId, invoiceId);
 
-                    // Kısmi ödeme kaydı yapılıyor
-                    insertPaymentLog(paymentId, customerId, paymentAmount); // invoiceId kaldırıldı
-                    insertPaymentInvoiceRelation(paymentId, invoiceId); // Ödeme-fatura ilişkisi kaydediliyor
+                    System.out.println("Fatura " + invoiceId + " tamamen ödendi.");
+                } else if (paymentAmount > 0 && paymentAmount < invoiceAmount) {
+                    // Kısmi ödeme
+                    double remainingDebt = invoiceAmount - paymentAmount;
+                    updateInvoiceAmount(invoiceId, remainingDebt);
+
+                    // Fatura ve ödeme ilişkisini doğru bir şekilde kaydet
+                    insertPaymentLog(paymentId, customerId, paymentAmount, invoiceId);
+                    insertPaymentInvoiceRelation(paymentId, invoiceId);
+
+                    System.out.println("Fatura " + invoiceId + " için kısmi ödeme yapıldı: " + paymentAmount);
 
                     paymentAmount = 0;
-                    break;
                 }
             }
 
-            // Kalan miktar varsa müşterinin fazla ödemesi olarak kaydedilir
+            // Eğer hala ödeme miktarı kaldıysa, fazla ödeme olarak kaydet
             if (paymentAmount > 0) {
                 customer.addExtraPayment(paymentAmount);
+                updateExcessPayment(customerId, customer.getExtraPayment());
                 System.out.println("Kalan miktar (" + paymentAmount + ") müşterinin fazla ödemesi olarak kaydedildi.");
             }
 
@@ -258,37 +278,48 @@ public class DatabaseManager {
         return paymentAmount;
     }
 
-
-
     // Ödeme logunu ekle
-    public static void insertPaymentLog(String paymentId, String customerId, double paidAmount) {
-        String insertPaymentLogSQL = "INSERT INTO PaymentLog (paymentId, customerId, paidAmount, paymentDate) VALUES (?, ?, ?, ?)";
+    public static void insertPaymentLog(String paymentId, String customerId, double paidAmount, int invoiceId) {
+        String insertPaymentLogSQL = "INSERT INTO PaymentLog (paymentId, customerId, paidAmount, paymentDate, invoiceId) VALUES (?, ?, ?, ?, ?)";
 
         try (PreparedStatement pstmt = connection.prepareStatement(insertPaymentLogSQL)) {
             pstmt.setString(1, paymentId);
             pstmt.setString(2, customerId);
             pstmt.setDouble(3, paidAmount);
             pstmt.setString(4, LocalDate.now().toString());
+            pstmt.setInt(5, invoiceId); // invoiceId'yi buraya ekledik
             pstmt.executeUpdate();
-            System.out.println("Ödeme logu başarıyla kaydedildi.");
+            System.out.println("Ödeme logu başarıyla kaydedildi, Fatura ID: " + invoiceId);
         } catch (SQLException e) {
             System.out.println("Ödeme logu kaydedilirken hata oluştu: " + e.getMessage());
         }
     }
 
-
-
-    // Ödeme ve fatura ilişkisini ekle
+    // Ödeme-Fatura ilişkisini eklerken tekrarları önle
     public static void insertPaymentInvoiceRelation(String paymentId, int invoiceId) {
-        String insertPaymentInvoiceRelationSQL = "INSERT INTO PaymentInvoiceRelation (paymentId, invoiceId) VALUES (?, ?)";
+        // İlk önce bu ödeme-fatura ilişkisinin zaten var olup olmadığını kontrol edelim
+        String checkExistenceSQL = "SELECT COUNT(*) AS count FROM PaymentInvoiceRelation WHERE paymentId = ? AND invoiceId = ?";
 
-        try (PreparedStatement pstmt = connection.prepareStatement(insertPaymentInvoiceRelationSQL)) {
-            pstmt.setString(1, paymentId);
-            pstmt.setInt(2, invoiceId);
-            pstmt.executeUpdate();
-            System.out.println("Ödeme ve fatura ilişkisi başarıyla kaydedildi.");
+        try (PreparedStatement pstmtCheck = connection.prepareStatement(checkExistenceSQL)) {
+            pstmtCheck.setString(1, paymentId);
+            pstmtCheck.setInt(2, invoiceId);
+            ResultSet rs = pstmtCheck.executeQuery();
+
+            if (rs.next() && rs.getInt("count") == 0) {
+                // Eğer ilişki yoksa, ekleyelim
+                String insertPaymentInvoiceRelationSQL = "INSERT INTO PaymentInvoiceRelation (paymentId, invoiceId) VALUES (?, ?)";
+
+                try (PreparedStatement pstmtInsert = connection.prepareStatement(insertPaymentInvoiceRelationSQL)) {
+                    pstmtInsert.setString(1, paymentId);
+                    pstmtInsert.setInt(2, invoiceId);
+                    pstmtInsert.executeUpdate();
+                    System.out.println("Ödeme ve fatura ilişkisi başarıyla kaydedildi, Fatura ID: " + invoiceId);
+                }
+            } else {
+                System.out.println("Bu ödeme-fatura ilişkisi zaten var, tekrar eklenmedi.");
+            }
         } catch (SQLException e) {
-            System.out.println("Ödeme ve fatura ilişkisi kaydedilirken hata oluştu: " + e.getMessage());
+            System.out.println("Ödeme ve fatura ilişkisi kontrol edilirken veya eklenirken hata oluştu: " + e.getMessage());
         }
     }
 
@@ -401,7 +432,7 @@ public class DatabaseManager {
 
     // Müşteri borcunu görüntüleme
     public static double getCustomerDebt(String customerId) {
-        String query = "SELECT SUM(amount) AS totalDebt FROM Invoice WHERE customerId = ? AND isPaid = 0";
+        String query = "SELECT SUM(totalDebt) AS totalDebt FROM Invoice WHERE customerId = ? AND isPaid = 0";
         double totalDebt = 0;
 
         try (PreparedStatement pstmt = connection.prepareStatement(query)) {
@@ -418,6 +449,7 @@ public class DatabaseManager {
 
         return totalDebt;
     }
+
 
     // Vadeye kalan günleri hesaplama
     public static int getDaysUntilDue(String customerId) {
@@ -606,7 +638,5 @@ public class DatabaseManager {
             System.out.println("Faturalar görüntülenirken hata oluştu: " + e.getMessage());
         }
     }
-
-
 
 }
