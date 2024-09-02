@@ -101,9 +101,5 @@ public class Customer {
         System.out.println("Gecikme Faizi: " + totalLateFees);
         System.out.println("Toplam Borç (Ana Para + Gecikme Faizi): " + (totalPrincipal + totalLateFees));
     }
-
-    // Toplu ödeme yapma işlemi (Veritabanı üzerinden)
-    public void makeBulkPayment(double totalPayment) {
-        DatabaseManager.makeBulkPayment(id, totalPayment);
-    }
 }
+

@@ -39,23 +39,18 @@ public class Main {
                     case 6:
                         viewLateFee();
                         break;
+
                     case 7:
-                        makeBulkPayment();
-                        break;
-                    case 8:
-                        processNextCustomer();
-                        break;
-                    case 9:
                         viewAllInvoices();
                         break;
-                    case 10:
+                    case 8:
                         deleteCustomer();
                         break;
-                    case 11:
-                        viewPaymentLogs(); // Yeni eklenen seçenek
+                    case 9:
+                        viewPaymentLogs(); // Ödeme Loglarını Görüntüle
                         break;
-                    case 12:
-                        viewPaymentInvoiceRelations(); // Yeni eklenen seçenek (Fatura ve ödeme ilişkilerini görüntüle)
+                    case 10:
+                        displayCustomerPaymentSummary(); // Ödeme-Fatura İlişkilerini Görüntüle
                         break;
                     case 0:
                         running = false; // Programdan çık
@@ -78,15 +73,14 @@ public class Main {
         System.out.println("4. Müşteri Borcunu Görüntüle");
         System.out.println("5. Vadeye Kalan Günleri Görüntüle");
         System.out.println("6. Gecikme Faizini Görüntüle");
-        System.out.println("7. Toplu Ödeme Yap");
-        System.out.println("8. Sıradaki Müşteriyi İşle");
-        System.out.println("9. Tüm Faturaları Görüntüle");
-        System.out.println("10. Müşteri Sil");
-        System.out.println("11. Ödeme Loglarını Görüntüle"); // Yeni eklenen seçenek
-        System.out.println("12. Ödeme-Fatura İlişkilerini Görüntüle"); // Yeni eklenen seçenek
+        System.out.println("7. Tüm Faturaları Görüntüle");
+        System.out.println("8. Müşteri Sil");
+        System.out.println("9. Ödeme Loglarını Görüntüle");
+        System.out.println("10. Ödeme-Fatura İlişkilerini Görüntüle");
         System.out.println("0. Çıkış");
         System.out.print("Seçiminizi yapın: ");
     }
+
 
     private static void addCustomer() {
         try {
@@ -188,74 +182,81 @@ public class Main {
     private static void viewCustomerDebt() {
         try {
             System.out.print("Müşteri ID: ");
-            String id = scanner.nextLine();
+            String customerId = scanner.nextLine();
 
-            // Veritabanından müşteri borcunu görüntüle
-            double totalDebt = DatabaseManager.getCustomerDebt(id);
-            System.out.println("Toplam Borç: " + totalDebt);
-            // Veritabanından gecikme faizini görüntüle
-            double lateFee = DatabaseManager.getLateFee(id);
-            System.out.println("Gecikme Faizi: " + lateFee);
+            System.out.println("Toplam Borcu mu görmek istersiniz yoksa belirli bir fatura borcunu mu?");
+            System.out.println("1. Toplam Borç");
+            System.out.println("2. Belirli Fatura Borcu");
+            int choice = scanner.nextInt();
+            scanner.nextLine(); // nextInt sonrası scanner'ı temizlemek için
+
+            if (choice == 1) {
+                // Toplam borcu göster
+                double totalDebt = DatabaseManager.getCustomerDebt(customerId);
+                System.out.println("Toplam Borç: " + totalDebt);
+            } else if (choice == 2) {
+                // Belirli fatura borcunu ve ödenmiş durumunu göster
+                System.out.print("Fatura ID: ");
+                int invoiceId = scanner.nextInt();
+                String invoiceDetails = DatabaseManager.getInvoiceDebt(invoiceId);
+                System.out.println(invoiceDetails);
+            } else {
+                System.out.println("Geçersiz seçim.");
+            }
 
         } catch (Exception e) {
             System.out.println("Müşteri borcunu görüntülerken bir hata oluştu: " + e.getMessage());
         }
     }
 
+
+
     private static void viewDaysUntilDue() {
         try {
             System.out.print("Müşteri ID: ");
-            String id = scanner.nextLine();
+            String customerId = scanner.nextLine();
 
-            // Veritabanından fatura vade günlerini görüntüle
-            int daysUntilDue = DatabaseManager.getDaysUntilDue(id);
-            System.out.println("Vadeye kalan günler: " + daysUntilDue);
+            // Müşterinin tüm faturalarının vadeye kalan günlerini göster
+            DatabaseManager.getDaysUntilDue(customerId);
 
         } catch (Exception e) {
             System.out.println("Vadeye kalan günler görüntülenirken bir hata oluştu: " + e.getMessage());
         }
     }
 
+
     private static void viewLateFee() {
         try {
             System.out.print("Müşteri ID: ");
-            String id = scanner.nextLine();
+            String customerId = scanner.nextLine();
 
-            // Veritabanından gecikme faizini görüntüle
-            double lateFee = DatabaseManager.getLateFee(id);
-            System.out.println("Gecikme Faizi: " + lateFee);
+            System.out.println("Toplam Gecikme Faizini mi görmek istersiniz yoksa belirli bir fatura gecikme faizini mi?");
+            System.out.println("1. Toplam Gecikme Faizi");
+            System.out.println("2. Belirli Fatura Gecikme Faizi");
+            int choice = scanner.nextInt();
+            scanner.nextLine(); // nextInt sonrası scanner'ı temizlemek için
+
+            if (choice == 1) {
+                // Tüm faturaların toplam gecikme faizini göster
+                double totalLateFee = DatabaseManager.getLateFee(customerId);
+                System.out.println("Toplam Gecikme Faizi: " + totalLateFee);
+            } else if (choice == 2) {
+                // Belirli fatura gecikme faizini göster
+                System.out.print("Fatura ID: ");
+                int invoiceId = scanner.nextInt();
+                Double lateFee = DatabaseManager.getInvoiceLateFee(invoiceId);
+                System.out.println(lateFee);
+            } else {
+                System.out.println("Geçersiz seçim.");
+            }
 
         } catch (Exception e) {
             System.out.println("Gecikme faizi görüntülenirken bir hata oluştu: " + e.getMessage());
         }
     }
 
-    private static void makeBulkPayment() {
-        try {
-            System.out.print("Müşteri ID: ");
-            String id = scanner.nextLine();
 
-            System.out.print("Toplu ödeme tutarı: ");
-            double paymentAmount = scanner.nextDouble();
 
-            // Veritabanında toplu ödeme işlemi
-            DatabaseManager.makeBulkPayment(id, paymentAmount);
-            System.out.println("Toplu ödeme yapıldı.");
-
-        } catch (Exception e) {
-            System.out.println("Toplu ödeme yapılırken bir hata oluştu: " + e.getMessage());
-        }
-    }
-
-    private static void processNextCustomer() {
-        try {
-            // Veritabanında sıradaki müşteriyi işleme
-            DatabaseManager.processNextCustomer();
-
-        } catch (Exception e) {
-            System.out.println("Müşteriler işlenirken bir hata oluştu: " + e.getMessage());
-        }
-    }
 
     private static void viewAllInvoices() {
         try {
@@ -277,13 +278,18 @@ public class Main {
         }
     }
 
-    private static void viewPaymentInvoiceRelations() {
+    private static void displayCustomerPaymentSummary() {
         try {
-            // Fatura ve ödeme ilişkilerini görüntüle
-            DatabaseManager.viewPaymentInvoiceRelations();
+            System.out.print("Müşteri ID'sini girin: ");
+            String customerId = scanner.nextLine();  // Müşteri ID'sini al
+
+            // Müşteri ödeme özetini görüntüle
+            DatabaseManager.displayCustomerPaymentSummary(customerId);
 
         } catch (Exception e) {
             System.out.println("Fatura-Ödeme ilişkileri görüntülenirken bir hata oluştu: " + e.getMessage());
         }
     }
+
+
 }

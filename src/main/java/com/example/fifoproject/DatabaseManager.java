@@ -3,7 +3,7 @@ package com.example.fifoproject;
 import java.io.File;
 import java.sql.*;
 import java.time.LocalDate;
-import java.util.UUID;
+import java.util.*;
 
 public class DatabaseManager {
 
@@ -76,7 +76,6 @@ public class DatabaseManager {
                 ");";
 
 
-
         String createPaymentInvoiceRelationTable = "CREATE TABLE IF NOT EXISTS PaymentInvoiceRelation (" +
                 "paymentId TEXT, " +
                 "invoiceId INTEGER, " +
@@ -94,7 +93,6 @@ public class DatabaseManager {
             System.out.println("Tablolar oluşturulurken hata oluştu: " + e.getMessage());
         }
     }
-
 
 
     // Müşteri ekleme
@@ -182,7 +180,6 @@ public class DatabaseManager {
     }
 
 
-
     // Fazla ödemeyi getir
     public static double getExcessPayment(String customerId) {
         String query = "SELECT excessPayment FROM Customer WHERE id = ?";
@@ -242,9 +239,9 @@ public class DatabaseManager {
                 if (paymentAmount >= invoiceAmount && invoiceAmount > 0) {
                     // Fatura tamamen ödeniyor
                     paymentAmount -= invoiceAmount;
-                    updateInvoiceAsPaid(invoiceId);
+                    updateInvoiceAsPaid(invoiceId); // isPaid alanını ve totalDebt alanını güncelle
 
-                    // Fatura ve ödeme ilişkisini doğru bir şekilde kaydet
+                    // Fatura ve ödeme ilişkisini kaydet
                     insertPaymentLog(paymentId, customerId, invoiceAmount, invoiceId);
                     insertPaymentInvoiceRelation(paymentId, invoiceId);
 
@@ -252,9 +249,11 @@ public class DatabaseManager {
                 } else if (paymentAmount > 0 && paymentAmount < invoiceAmount) {
                     // Kısmi ödeme
                     double remainingDebt = invoiceAmount - paymentAmount;
+
+                    // totalDebt üzerinde işlem yapıyoruz
                     updateInvoiceAmount(invoiceId, remainingDebt);
 
-                    // Fatura ve ödeme ilişkisini doğru bir şekilde kaydet
+                    // Fatura ve ödeme ilişkisini kaydet
                     insertPaymentLog(paymentId, customerId, paymentAmount, invoiceId);
                     insertPaymentInvoiceRelation(paymentId, invoiceId);
 
@@ -264,7 +263,7 @@ public class DatabaseManager {
                 }
             }
 
-            // Eğer hala ödeme miktarı kaldıysa, fazla ödeme olarak kaydet
+                // Eğer hala ödeme miktarı kaldıysa, fazla ödeme olarak kaydet
             if (paymentAmount > 0) {
                 customer.addExtraPayment(paymentAmount);
                 updateExcessPayment(customerId, customer.getExtraPayment());
@@ -297,7 +296,6 @@ public class DatabaseManager {
 
     // Ödeme-Fatura ilişkisini eklerken tekrarları önle
     public static void insertPaymentInvoiceRelation(String paymentId, int invoiceId) {
-        // İlk önce bu ödeme-fatura ilişkisinin zaten var olup olmadığını kontrol edelim
         String checkExistenceSQL = "SELECT COUNT(*) AS count FROM PaymentInvoiceRelation WHERE paymentId = ? AND invoiceId = ?";
 
         try (PreparedStatement pstmtCheck = connection.prepareStatement(checkExistenceSQL)) {
@@ -348,34 +346,82 @@ public class DatabaseManager {
     }
 
 
-    public static void viewPaymentInvoiceRelations() {
-        String query = "SELECT pir.paymentId, pir.invoiceId, pl.customerId, pl.paidAmount, pl.paymentDate " +
-                "FROM PaymentInvoiceRelation pir " +
-                "JOIN PaymentLog pl ON pir.paymentId = pl.paymentId " +
-                "ORDER BY pir.paymentId";
+    public static void displayCustomerPaymentSummary(String customerId) {
+        String query = "SELECT " +
+                "pl.paymentId, " +
+                "pl.paymentDate, " +
+                "c.id AS customerId, " +
+                "c.firstName || ' ' || c.lastName AS customerName, " +
+                "c.excessPayment, " +
+                "pl.invoiceId, " +
+                "SUM(pl.paidAmount) AS totalPaid " +
+                "FROM PaymentLog pl " +
+                "JOIN Customer c ON pl.customerId = c.id " +
+                "WHERE pl.customerId = ? " +
+                "GROUP BY pl.paymentId, pl.invoiceId " +
+                "ORDER BY pl.paymentDate ASC";
 
-        try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
+        try (PreparedStatement pstmt = connection.prepareStatement(query)) {
+            pstmt.setString(1, customerId);
+            ResultSet rs = pstmt.executeQuery();
+
+            Map<String, List<PaymentDetail>> paymentSummary = new LinkedHashMap<>();
+            double totalExcessPayment = 0.0;
+            String customerName = "";
 
             while (rs.next()) {
                 String paymentId = rs.getString("paymentId");
-                int invoiceId = rs.getInt("invoiceId");
-                String customerId = rs.getString("customerId");
-                double paidAmount = rs.getDouble("paidAmount");
                 String paymentDate = rs.getString("paymentDate");
+                int invoiceId = rs.getInt("invoiceId");
+                double totalPaid = rs.getDouble("totalPaid");
+                totalExcessPayment = rs.getDouble("excessPayment");
+                customerName = rs.getString("customerName");
 
-                System.out.println("Ödeme ID: " + paymentId +
-                        ", Fatura ID: " + invoiceId +
-                        ", Müşteri ID: " + customerId +
-                        ", Ödenen Tutar: " + paidAmount +
-                        ", Ödeme Tarihi: " + paymentDate);
+                PaymentDetail detail = new PaymentDetail(invoiceId, totalPaid);
+
+                paymentSummary
+                        .computeIfAbsent(paymentId, k -> new ArrayList<>())
+                        .add(detail);
+            }
+
+            if (paymentSummary.isEmpty()) {
+                System.out.println("Bu müşteri için ödeme kaydı bulunamadı.");
+                return;
+            }
+
+            System.out.println("Müşteri Adı: " + customerName);
+            System.out.println("Müşteri ID: " + customerId);
+            System.out.println("Müşterinin Şirkette Kalan Fazla Ödemesi: " + totalExcessPayment);
+
+            for (Map.Entry<String, List<PaymentDetail>> entry : paymentSummary.entrySet()) {
+                String paymentId = entry.getKey();
+                List<PaymentDetail> details = entry.getValue();
+
+                System.out.println("\nÖdeme ID: " + paymentId);
+
+                double paymentTotal = 0.0;
+                for (PaymentDetail detail : details) {
+                    System.out.println("- Fatura ID: " + detail.invoiceId + ", Ödenen Tutar: " + detail.paidAmount);
+                    paymentTotal += detail.paidAmount;
+                }
+
+                System.out.println("Bu Ödeme için Toplam Ödenen Tutar: " + paymentTotal);
             }
 
         } catch (SQLException e) {
-            System.out.println("Fatura-Ödeme ilişkileri görüntülenirken hata oluştu: " + e.getMessage());
+            System.out.println("Müşteri ödeme özeti görüntülenirken hata oluştu: " + e.getMessage());
         }
     }
 
+    static class PaymentDetail {
+        int invoiceId;
+        double paidAmount;
+
+        public PaymentDetail(int invoiceId, double paidAmount) {
+            this.invoiceId = invoiceId;
+            this.paidAmount = paidAmount;
+        }
+    }
 
 
     public static Customer getCustomerById(String customerId) {
@@ -399,10 +445,9 @@ public class DatabaseManager {
         return null;
     }
 
-
     // Faturayı ödenmiş olarak güncelle
     private static void updateInvoiceAsPaid(int invoiceId) {
-        String updateInvoiceSQL = "UPDATE Invoice SET isPaid = 1, paymentDate = ? WHERE id = ?";
+        String updateInvoiceSQL = "UPDATE Invoice SET isPaid = 1, totalDebt = 0, paymentDate = ? WHERE id = ?";
 
         try (PreparedStatement pstmt = connection.prepareStatement(updateInvoiceSQL)) {
             pstmt.setString(1, LocalDate.now().toString());
@@ -415,20 +460,22 @@ public class DatabaseManager {
         }
     }
 
-    // Fatura tutarını güncelle
-    private static void updateInvoiceAmount(int invoiceId, double newAmount) {
-        String updateAmountSQL = "UPDATE Invoice SET amount = ? WHERE id = ?";
+
+    // Fatura tutarını güncellemek yerine totalDebt üzerinden güncelleme yapıldı
+    private static void updateInvoiceAmount(int invoiceId, double newTotalDebt) {
+        String updateAmountSQL = "UPDATE Invoice SET totalDebt = ?, isPaid = ? WHERE id = ?";
 
         try (PreparedStatement pstmt = connection.prepareStatement(updateAmountSQL)) {
-            pstmt.setDouble(1, newAmount);
-            pstmt.setInt(2, invoiceId);
+            pstmt.setDouble(1, newTotalDebt);
+            pstmt.setInt(2, newTotalDebt == 0 ? 1 : 0); // Eğer borç kalmamışsa isPaid = 1 yap
+            pstmt.setInt(3, invoiceId);
             pstmt.executeUpdate();
-            System.out.println("Fatura tutarı güncellendi.");
-
+            System.out.println("Fatura toplam borcu güncellendi.");
         } catch (SQLException e) {
-            System.out.println("Fatura tutarı güncellenirken hata oluştu: " + e.getMessage());
+            System.out.println("Fatura toplam borcu güncellenirken hata oluştu: " + e.getMessage());
         }
     }
+
 
     // Müşteri borcunu görüntüleme
     public static double getCustomerDebt(String customerId) {
@@ -452,61 +499,37 @@ public class DatabaseManager {
 
 
     // Vadeye kalan günleri hesaplama
-    public static int getDaysUntilDue(String customerId) {
-        String query = "SELECT dueDate FROM Invoice WHERE customerId = ? AND isPaid = 0 ORDER BY dueDate ASC LIMIT 1";
-        int daysUntilDue = -1;
+    public static void getDaysUntilDue(String customerId) {
+        String query = "SELECT id, dueDate, isPaid FROM Invoice WHERE customerId = ? ORDER BY dueDate ASC";
 
         try (PreparedStatement pstmt = connection.prepareStatement(query)) {
             pstmt.setString(1, customerId);
             ResultSet rs = pstmt.executeQuery();
 
-            if (rs.next()) {
+            while (rs.next()) {
+                int invoiceId = rs.getInt("id");
                 LocalDate dueDate = LocalDate.parse(rs.getString("dueDate"));
-                daysUntilDue = (int) LocalDate.now().until(dueDate).getDays();
+                boolean isPaid = rs.getInt("isPaid") == 1;
+                long daysUntilDue = LocalDate.now().until(dueDate).getDays();
+
+                System.out.println("Fatura ID: " + invoiceId + ", Vadeye Kalan Günler: " + daysUntilDue + ", Ödenmiş: " + (isPaid ? "Evet" : "Hayır"));
             }
 
         } catch (SQLException e) {
-            System.out.println("Vadeye kalan günler hesaplanırken hata oluştu: " + e.getMessage());
+            System.out.println("Vadeye kalan günler görüntülenirken hata oluştu: " + e.getMessage());
         }
-
-        return daysUntilDue;
     }
 
+
     // Gecikme faizi hesaplama
-    public static double getLateFee(String customerId) throws SQLException {
-        String query = "SELECT * FROM Invoice WHERE customerId = ? AND isPaid = 0 AND dueDate < ?";
-        String query2 = "SELECT \n" +
-                "    Invoice.id, \n" +
-                "    Invoice.amount, \n" +
-                "    Invoice.dueDate, \n" +
-                "    Invoice.paymentDate, \n" +
-                "    Invoice.isPaid, \n" +
-                "    Customer.firstName, \n" +
-                "    Customer.lastName, \n" +
-                "    Customer.isGroupCompany \n" +
-                "FROM \n" +
-                "    Invoice \n" +
-                "INNER JOIN \n" +
-                "    Customer \n" +
-                "ON \n" +
-                "    Invoice.customerId = Customer.id \n" +
-                "WHERE \n" +
-                "    Invoice.customerId = ? \n" +
-                "AND \n" +
-                "    Invoice.isPaid = 0 \n" +
-                "AND \n" +
-                "    Invoice.dueDate < ?\n";
+
+    public static double getLateFee(String customerId) {
+        String query = "SELECT i.id, i.amount, i.dueDate, c.isGroupCompany, i.isPaid " +
+                "FROM Invoice i " +
+                "INNER JOIN Customer c ON i.customerId = c.id " +
+                "WHERE i.customerId = ? AND i.isPaid = 0 AND i.dueDate < ?";
 
         double totalLateFee = 0;
-        PreparedStatement pstmt1 = connection.prepareStatement(query2);
-        ResultSet rs2= pstmt1.executeQuery();
-        boolean isGroupCompany = rs2.getBoolean("isGroupCompany");
-        LocalDate dueDate = LocalDate.parse(rs2.getString("dueDate"));
-        long overdueDays = Math.abs(LocalDate.now().until(dueDate).getDays());
-
-        boolean isEarlyPayment = rs2.getBoolean("isEarlyPayment");
-
-        double INTEREST_RATE = InterestRateCalculator.InterestCalculation(isGroupCompany, overdueDays, isEarlyPayment); // %2 gecikme faizi
 
         try (PreparedStatement pstmt = connection.prepareStatement(query)) {
             pstmt.setString(1, customerId);
@@ -514,16 +537,23 @@ public class DatabaseManager {
             ResultSet rs = pstmt.executeQuery();
 
             while (rs.next()) {
-                dueDate = LocalDate.parse(rs.getString("dueDate"));
-                overdueDays = Math.abs(LocalDate.now().until(dueDate).getDays());
+                int invoiceId = rs.getInt("id");
                 double amount = rs.getDouble("amount");
+                LocalDate dueDate = LocalDate.parse(rs.getString("dueDate"));
+                boolean isGroupCompany = rs.getBoolean("isGroupCompany");
+                boolean isPaid = rs.getBoolean("isPaid");
+
+                long overdueDays = Math.abs(LocalDate.now().until(dueDate).getDays());
+                double INTEREST_RATE = InterestRateCalculator.InterestCalculation(isGroupCompany, overdueDays, false);
+
                 double lateFee = overdueDays * INTEREST_RATE * amount;
 
-                // Faiz borcunu tutacak sütunu güncelle
-                int invoiceId = rs.getInt("id");
+                // Faiz borcunu ve toplam borcu güncelle
                 updateInvoiceLateFee(invoiceId, lateFee);
 
                 totalLateFee += lateFee;
+
+                System.out.println("Fatura ID: " + invoiceId + ", Gecikme Faizi: " + lateFee + ", Ödenmiş: " + isPaid);
             }
 
         } catch (SQLException e) {
@@ -532,6 +562,43 @@ public class DatabaseManager {
 
         return totalLateFee;
     }
+
+    public static double getInvoiceLateFee(int invoiceId) {
+        String query = "SELECT i.amount, i.dueDate, c.isGroupCompany, i.isPaid " +
+                "FROM Invoice i " +
+                "INNER JOIN Customer c ON i.customerId = c.id " +
+                "WHERE i.id = ?";
+
+        double lateFee = 0;
+
+        try (PreparedStatement pstmt = connection.prepareStatement(query)) {
+            pstmt.setInt(1, invoiceId);
+            ResultSet rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                double amount = rs.getDouble("amount");
+                LocalDate dueDate = LocalDate.parse(rs.getString("dueDate"));
+                boolean isGroupCompany = rs.getBoolean("isGroupCompany");
+                boolean isPaid = rs.getBoolean("isPaid");
+
+                long overdueDays = Math.abs(LocalDate.now().until(dueDate).getDays());
+                double INTEREST_RATE = InterestRateCalculator.InterestCalculation(isGroupCompany, overdueDays, false);
+
+                lateFee = overdueDays * INTEREST_RATE * amount;
+
+                // Faiz borcunu ve toplam borcu güncelle
+                updateInvoiceLateFee(invoiceId, lateFee);
+
+                System.out.println("Fatura ID: " + invoiceId + ", Gecikme Faizi: " + lateFee + ", Ödenmiş: " + isPaid);
+            }
+
+        } catch (SQLException e) {
+            System.out.println("Gecikme faizi hesaplanırken hata oluştu: " + e.getMessage());
+        }
+
+        return lateFee;
+    }
+
 
     // Gecikme faizi ve toplam borcu güncelleyen metot
     private static void updateInvoiceLateFee(int invoiceId, double lateFee) {
@@ -549,49 +616,13 @@ public class DatabaseManager {
         }
     }
 
-
-
-    // Toplu ödeme yapma
-    public static void makeBulkPayment(String customerId, double totalPayment) {
-        String selectUnpaidInvoicesSQL = "SELECT * FROM Invoice WHERE customerId = ? AND isPaid = 0 ORDER BY dueDate ASC";
-
-        try (PreparedStatement pstmt = connection.prepareStatement(selectUnpaidInvoicesSQL)) {
-            pstmt.setString(1, customerId);
-            ResultSet rs = pstmt.executeQuery();
-
-            while (rs.next() && totalPayment > 0) {
-                double invoiceAmount = rs.getDouble("amount");
-                int invoiceId = rs.getInt("id");
-
-                if (totalPayment >= invoiceAmount) {
-                    // Fatura tamamen ödeniyor
-                    totalPayment -= invoiceAmount;
-                    updateInvoiceAsPaid(invoiceId);
-                } else {
-                    // Fatura kısmen ödeniyor
-                    updateInvoiceAmount(invoiceId, invoiceAmount - totalPayment);
-                    totalPayment = 0;
-                }
-            }
-
-            System.out.println("Toplu ödeme yapıldı.");
-
-        } catch (SQLException e) {
-            System.out.println("Toplu ödeme yapılırken hata oluştu: " + e.getMessage());
-        }
-    }
-
-    // Sıradaki müşteriyi işleme
-    public static void processNextCustomer() {
-        // Sıradaki müşteriyi işleme mantığını buraya ekleyebilirsin.
-        // Örneğin, ödeme yapma, borç gösterme gibi işlemler yapılabilir.
-        System.out.println("Sıradaki müşteri işleniyor...");
-    }
-
     // Tüm faturaları görüntüleme
     public static void viewAllInvoices() {
-        String query = "SELECT Invoice.id, Customer.firstName, Customer.lastName, Customer.isGroupCompany, Invoice.amount, Invoice.lateFee, Invoice.totalDebt, Invoice.dueDate, Invoice.paymentDate, Invoice.isPaid " +
-                "FROM Invoice INNER JOIN Customer ON Invoice.customerId = Customer.id ORDER BY Invoice.dueDate ASC";
+        String query = "SELECT Invoice.id, Customer.firstName, Customer.lastName, Customer.isGroupCompany, " +
+                "Invoice.amount, Invoice.lateFee, Invoice.totalDebt, Invoice.dueDate, " +
+                "Invoice.paymentDate, Invoice.isPaid " +
+                "FROM Invoice INNER JOIN Customer ON Invoice.customerId = Customer.id " +
+                "ORDER BY Invoice.dueDate ASC";
 
         try (Statement stmt = connection.createStatement()) {
             ResultSet rs = stmt.executeQuery(query);
@@ -608,13 +639,19 @@ public class DatabaseManager {
                 double lateFee = rs.getDouble("lateFee");
                 double totalDebt = rs.getDouble("totalDebt");
 
+                if (isPaid) {
+                    // Eğer ödeme yapıldıysa gecikme faizi ve toplam borcu güncelleme
+                    System.out.println("Müşteri: " + customerName + ", Ana Para: " + amount +
+                            ", Gecikme Faizi: " + lateFee + ", Toplam Borç: " + totalDebt +
+                            ", Vade Tarihi: " + dueDate + ", Ödenmiş: " + isPaid);
+                    continue;
+                }
+
                 // Gecikme Faizi ve Toplam Borcu yeniden hesapla
                 long overdueDays = 0;
                 boolean isEarlyPayment = false;
 
-                if (isPaid && paymentDate != null && paymentDate.isBefore(dueDate)) {
-                    isEarlyPayment = true;
-                } else if (!isPaid && LocalDate.now().isAfter(dueDate)) {
+                if (!isPaid && LocalDate.now().isAfter(dueDate)) {
                     overdueDays = Math.abs(LocalDate.now().until(dueDate).getDays());
                 }
 
@@ -636,6 +673,55 @@ public class DatabaseManager {
 
         } catch (SQLException e) {
             System.out.println("Faturalar görüntülenirken hata oluştu: " + e.getMessage());
+        }
+    }
+
+
+    public static String getInvoiceDebt(int invoiceId) {
+        String query = "SELECT totalDebt, isPaid FROM Invoice WHERE id = ?";
+        double invoiceDebt = 0;
+        boolean isPaid = false;
+
+        try (PreparedStatement pstmt = connection.prepareStatement(query)) {
+            pstmt.setInt(1, invoiceId);
+            ResultSet rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                invoiceDebt = rs.getDouble("totalDebt");
+                isPaid = rs.getInt("isPaid") == 1;
+            }
+        } catch (SQLException e) {
+            System.out.println("Fatura borcu görüntülenirken hata oluştu: " + e.getMessage());
+        }
+
+        return "Fatura Borcu: " + invoiceDebt + ", Ödenmiş: " + (isPaid ? "Evet" : "Hayır");
+    }
+    public static void updateLateFees() {
+        String query = "SELECT i.id, i.amount, i.dueDate, c.isGroupCompany, i.isPaid " +
+                "FROM Invoice i " +
+                "INNER JOIN Customer c ON i.customerId = c.id " +
+                "WHERE i.isPaid = 0 AND i.dueDate < ?";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(query)) {
+            pstmt.setString(1, LocalDate.now().toString());
+            ResultSet rs = pstmt.executeQuery();
+
+            while (rs.next()) {
+                int invoiceId = rs.getInt("id");
+                double amount = rs.getDouble("amount");
+                LocalDate dueDate = LocalDate.parse(rs.getString("dueDate"));
+                boolean isGroupCompany = rs.getBoolean("isGroupCompany");
+
+                long overdueDays = Math.abs(LocalDate.now().until(dueDate).getDays());
+                double INTEREST_RATE = InterestRateCalculator.InterestCalculation(isGroupCompany, overdueDays, false);
+                double lateFee = overdueDays * INTEREST_RATE * amount;
+
+                // Gecikme faizi ve toplam borcu güncelle
+                updateInvoiceLateFee(invoiceId, lateFee);
+            }
+
+        } catch (SQLException e) {
+            System.out.println("Gecikme faizi hesaplanırken hata oluştu: " + e.getMessage());
         }
     }
 
