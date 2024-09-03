@@ -8,6 +8,7 @@ public class Invoice {
     private LocalDate paymentDate;
     private boolean isPaid;
     private static final double INTEREST_RATE = 0.02;
+    private int id;
 
     public Invoice(double amount, LocalDate dueDate) {
         this.amount = amount;
@@ -76,5 +77,13 @@ public class Invoice {
 
     public void setPaymentDate(LocalDate paymentDate) {
         this.paymentDate = paymentDate;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void setId(int id) {
+        this.id = id;
     }
 }

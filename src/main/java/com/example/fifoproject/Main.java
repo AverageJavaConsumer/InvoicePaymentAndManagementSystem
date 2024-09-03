@@ -1,7 +1,9 @@
 package com.example.fifoproject;
 
+
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.Scanner;
 
 public class Main {
@@ -52,6 +54,9 @@ public class Main {
                     case 10:
                         displayCustomerPaymentSummary(); // Ödeme-Fatura İlişkilerini Görüntüle
                         break;
+                    case 11:
+                        applyExcessPaymentToInvoice();
+                        break;
                     case 0:
                         running = false; // Programdan çık
                         break;
@@ -77,9 +82,11 @@ public class Main {
         System.out.println("8. Müşteri Sil");
         System.out.println("9. Ödeme Loglarını Görüntüle");
         System.out.println("10. Ödeme-Fatura İlişkilerini Görüntüle");
+        System.out.println("11. Fazla Ödeme İle Fatura Ödeme");
         System.out.println("0. Çıkış");
         System.out.print("Seçiminizi yapın: ");
     }
+
 
 
     private static void addCustomer() {
@@ -290,6 +297,57 @@ public class Main {
             System.out.println("Fatura-Ödeme ilişkileri görüntülenirken bir hata oluştu: " + e.getMessage());
         }
     }
+    private static void applyExcessPaymentToInvoice() {
+        try {
 
+            System.out.print("Müşteri ID'sini girin: ");
+            String customerId = scanner.nextLine();
+
+            // Fazla ödeme ve ödenmemiş faturaları alın
+            double excessPayment = DatabaseManager.getExcessPayment(customerId);
+            List<Invoice> unpaidInvoices = DatabaseManager.getUnpaidInvoicesForCustomer(customerId);
+
+            // Eğer fazla ödeme yoksa veya ödenmemiş fatura yoksa işlem yapmayalım
+            if (excessPayment <= 0) {
+                System.out.println("Müşterinin şirkette kalan fazla ödemesi yok.");
+                return;
+            }
+
+            if (unpaidInvoices.isEmpty()) {
+                System.out.println("Müşterinin ödenmemiş faturası yok.");
+                return;
+            }
+
+            System.out.println("Müşterinin mevcut fazla ödemesi: " + excessPayment);
+            System.out.println("Ödenmemiş faturalar:");
+            for (int i = 0; i < unpaidInvoices.size(); i++) {
+                Invoice invoice = unpaidInvoices.get(i);
+                System.out.println((i + 1) + ". Fatura ID: " + invoice.getId() + ", Tutar: " + invoice.getAmount() + ", Vade Tarihi: " + invoice.getDueDate());
+            }
+
+            System.out.print("Fazla ödeme ile hangi faturayı ödemek istersiniz (fatura numarasını girin): ");
+            int invoiceChoice = scanner.nextInt();
+            scanner.nextLine(); // Satır sonunu temizle
+
+            Invoice selectedInvoice = null;
+            for (Invoice invoice : unpaidInvoices) {
+                if (invoice.getId() == invoiceChoice) {
+                    selectedInvoice = invoice;
+                    break;
+                }
+            }
+
+            if (selectedInvoice == null) {
+                System.out.println("Geçersiz seçim.");
+                return;
+            }
+
+            // Seçilen faturaya fazla ödeme uygula
+            DatabaseManager.applyExcessPaymentToInvoice(customerId, selectedInvoice.getId(), excessPayment);
+
+        } catch (Exception e) {
+            System.out.println("Fazla ödeme uygulanırken hata oluştu: " + e.getMessage());
+        }
+    }
 
 }
