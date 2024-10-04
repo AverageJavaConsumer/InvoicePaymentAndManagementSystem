@@ -4,6 +4,7 @@
 This project is a Customer Debt Management System designed to manage invoices, payments, and excess payments for customers. The system also includes functionalities to calculate late fees, log payments, and provide detailed summaries of customer financial interactions.
 
 Features:
+
 Customer Management
 Add new customers to the system.
 Delete existing customers.
